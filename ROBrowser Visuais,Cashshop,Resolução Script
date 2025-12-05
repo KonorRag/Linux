@@ -1,0 +1,239 @@
+⭐ SCRIPT COMPLETO
+#!/bin/bash
+set -e
+
+echo "=============================================="
+echo "  INSTALAÇÃO FULL rAthena + RoBrowser (LOCAL)"
+echo "=============================================="
+
+#############################
+# 1. ATUALIZAÇÃO DO SISTEMA
+#############################
+sudo apt update -y
+sudo apt upgrade -y
+sudo apt install -y build-essential git cmake make gcc g++ zlib1g-dev libmysqlclient-dev mariadb-server mariadb-client libssl-dev curl unzip
+
+#############################
+# 2. CONFIGURAR MYSQL
+#############################
+echo "Criando banco do Ragnarok..."
+
+sudo service mysql start
+
+mysql -u root <<EOF
+CREATE DATABASE ragnarok;
+CREATE USER 'ragnarok'@'localhost' IDENTIFIED BY 'ragnarok';
+GRANT ALL PRIVILEGES ON ragnarok.* TO 'ragnarok'@'localhost';
+FLUSH PRIVILEGES;
+EOF
+
+echo "Banco ragnarok criado!"
+sleep 1
+
+#############################
+# 3. INSTALAR rATHENA
+#############################
+echo "Baixando rAthena..."
+cd /opt
+sudo git clone https://github.com/rathena/rathena.git
+cd rathena
+
+echo "Configurando conf do rAthena..."
+sudo cp conf/import-tmpl/* conf/import/
+
+# CONFIGURAÇÃO DE LOGIN
+sudo sed -i "s/username: .*/username: ragnarok/" conf/import/inter_conf.txt
+sudo sed -i "s/password: .*/password: ragnarok/" conf/import/inter_conf.txt
+sudo sed -i "s/server_ip: .*/server_ip: 127.0.0.1/" conf/import/char_conf.txt
+sudo sed -i "s/char_ip: .*/char_ip: 127.0.0.1/" conf/import/map_conf.txt
+sudo sed -i "s/map_ip: .*/map_ip: 127.0.0.1/" conf/import/inter_conf.txt
+
+#############################
+# 4. COMPILAR RATHENA
+#############################
+echo "Compilando rAthena..."
+sleep 1
+sudo mkdir build && cd build
+sudo cmake ..
+sudo make -j$(nproc)
+
+echo "rAthena compilado com sucesso!"
+
+#############################
+# 5. CRIAR SERVIÇOS
+#############################
+echo "Criando serviços systemd..."
+
+cat <<EOF | sudo tee /etc/systemd/system/rathena-login.service
+[Unit]
+Description=rAthena Login Server
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/rathena
+ExecStart=/opt/rathena/build/login-server
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat <<EOF | sudo tee /etc/systemd/system/rathena-char.service
+[Unit]
+Description=rAthena Char Server
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/rathena
+ExecStart=/opt/rathena/build/char-server
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat <<EOF | sudo tee /etc/systemd/system/rathena-map.service
+[Unit]
+Description=rAthena Map Server
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/rathena
+ExecStart=/opt/rathena/build/map-server
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable rathena-login rathena-char rathena-map
+sudo systemctl start rathena-login rathena-char rathena-map
+
+#############################
+# 6. INSTALAR ROBROWSER
+#############################
+echo "Baixando RoBrowser..."
+cd /var/www
+sudo git clone https://github.com/vthibault/roBrowser.git robrowser
+cd robrowser
+
+echo "Instalando dependências do RoBrowser..."
+sudo apt install -y nodejs npm
+npm install
+
+#############################
+# 7. CONFIGURAR QUALIDADE (NORMAL / ULTRA / INSANE / INSANE++)
+#############################
+echo "Instalando sistema de presets de qualidade..."
+
+mkdir -p config
+
+cat <<EOF | sudo tee config/quality.js
+export const QualityPresets = {
+    normal: { width:1280, height:720, pixelRatio:1.0, textureScale:1.0, scale:1.0, maxFPS:60 },
+    ultra: { width:1920, height:1080, pixelRatio:2.0, textureScale:2.0, scale:1.25, maxFPS:144 },
+    insane: { width:3840, height:2160, pixelRatio:3.0, textureScale:3.0, scale:1.4, maxFPS:144 },
+    insane_plus: { width:7680, height:4320, pixelRatio:4.0, textureScale:4.0, scale:1.6, maxFPS:240 }
+};
+EOF
+
+cat <<EOF | sudo tee config/config.js
+import { QualityPresets } from "./quality.js";
+
+var Config = {};
+
+const userSetting = localStorage.getItem("robrowser_quality") || "ultra";
+const Q = QualityPresets[userSetting];
+
+// GRÁFICOS
+Config.Graphics = {
+    width: Q.width,
+    height: Q.height,
+    mode: "stretch",
+    useAntialias: true,
+    antialias: "msaa",
+    anisotropy: 16,
+    pixelRatio: Q.pixelRatio,
+    textureScale: Q.textureScale,
+    lights: true,
+    shadows: true,
+    smoothWalk: true,
+    maxFPS: Q.maxFPS
+};
+
+// UI
+Config.UI = {
+    scale: Q.scale,
+    chatFontSize: 14,
+    useHDIcons: true
+};
+
+Config.Network = { packetver: 20200701, useWebSocket: true };
+Config.Sound = { volume: 100 };
+Config.Client = { skipIntro: true, enableCache: true };
+
+export default Config;
+EOF
+
+#############################
+# 8. ADICIONAR MENU DE QUALIDADE NO HTML
+#############################
+cat <<EOF | sudo tee index.html
+<!DOCTYPE html>
+<html>
+<head>
+<title>RoBrowser - Seletor de Qualidade</title>
+</head>
+<body>
+<div id="quality-box" style="position:fixed;top:20px;right:20px;background:#222;padding:15px;border-radius:10px;color:#fff;z-index:9999">
+    <label>Qualidade Gráfica:</label>
+    <select id="quality-select">
+        <option value="normal">Normal (720p)</option>
+        <option value="ultra">Ultra (1080p)</option>
+        <option value="insane">Insane (4K)</option>
+        <option value="insane_plus">Insane++ (8K)</option>
+    </select>
+</div>
+
+<script>
+const select = document.getElementById("quality-select");
+select.value = localStorage.getItem("robrowser_quality") || "ultra";
+
+select.addEventListener("change", () => {
+    localStorage.setItem("robrowser_quality", select.value);
+    alert("Configuração salva! Recarregue a página.");
+});
+</script>
+
+<script type="module" src="./src/index.js"></script>
+</body>
+</html>
+EOF
+
+#############################
+# 9. INSTALAR SERVIDOR WEB
+#############################
+sudo apt install -y nginx
+sudo rm -rf /var/www/html
+sudo ln -s /var/www/roBrowser /var/www/html
+
+sudo systemctl restart nginx
+
+echo "=============================================="
+echo " INSTALAÇÃO COMPLETA! "
+echo " rAthena: rodando"
+echo " RoBrowser: http://localhost"
+echo " Qualidade selecionável: Normal / Ultra / Insane / Insane++"
+echo "=============================================="
+
+🎮 COMO RODAR
+
+Dê permissão:
+
+chmod +x install_full_rathena_robrowser.sh
+
+
+Execute:
+
+sudo ./install_full_rathena_robrowser.sh
