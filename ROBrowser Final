@@ -1,0 +1,289 @@
+🚀 SCRIPT FULL – rAthena + RoBrowser + Menu de Qualidade + 60 Hz (Ubuntu 24.04)
+
+Crie o arquivo:
+
+nano install_full_rathena_robrowser.sh
+
+
+Cole tudo abaixo:
+
+#!/bin/bash
+set -e
+
+echo "=========================================================="
+echo " INSTALAÇÃO FULL DO ZERO — rAthena + RoBrowser + Menu HQ"
+echo "=========================================================="
+sleep 2
+
+# ------------------------------------------------------------
+# 1. Atualizar sistema
+# ------------------------------------------------------------
+apt update -y && apt upgrade -y
+
+# ------------------------------------------------------------
+# 2. Instalar dependências essenciais
+# ------------------------------------------------------------
+apt install -y git build-essential mysql-server mysql-client \
+zlib1g-dev libpcre3-dev libmysqlclient-dev libssl-dev \
+nginx unzip curl nodejs npm
+
+# ------------------------------------------------------------
+# 3. Node.js atualizado
+# ------------------------------------------------------------
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs
+
+# ------------------------------------------------------------
+# 4. Configurar MySQL
+# ------------------------------------------------------------
+mysql -u root <<EOF
+CREATE DATABASE ragnarok DEFAULT CHARACTER SET utf8mb4;
+CREATE USER 'ragnarok'@'localhost' IDENTIFIED BY 'senha123';
+GRANT ALL PRIVILEGES ON ragnarok.* TO 'ragnarok'@'localhost';
+FLUSH PRIVILEGES;
+EOF
+
+# ------------------------------------------------------------
+# 5. Baixar rAthena
+# ------------------------------------------------------------
+cd /opt
+git clone https://github.com/rathena/rathena.git
+cd rathena
+
+# ------------------------------------------------------------
+# 6. Compilar rAthena
+# ------------------------------------------------------------
+./configure
+make clean
+make server
+
+# ------------------------------------------------------------
+# 7. Importar Base SQL
+# ------------------------------------------------------------
+mysql -u root ragnarok < sql-files/main.sql
+mysql -u root ragnarok < sql-files/logs.sql
+
+# ------------------------------------------------------------
+# 8. Editar configs automáticas
+# ------------------------------------------------------------
+sed -i 's/username: root/username: ragnarok/' conf/inter_athena.conf
+sed -i 's/password: ""/password: "senha123"/' conf/inter_athena.conf
+sed -i 's/login_ip: 127.0.0.1/login_ip: 127.0.0.1/' conf/login_athena.conf
+sed -i 's/server_ip: 127.0.0.1/server_ip: 127.0.0.1/' conf/char_athena.conf
+sed -i 's/server_ip: 127.0.0.1/server_ip: 127.0.0.1/' conf/map_athena.conf
+
+# ------------------------------------------------------------
+# 9. Criar serviços systemd
+# ------------------------------------------------------------
+cat > /etc/systemd/system/rathena-login.service <<EOF
+[Unit]
+Description=rAthena Login Server
+
+[Service]
+WorkingDirectory=/opt/rathena
+ExecStart=/opt/rathena/login-server
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/rathena-char.service <<EOF
+[Unit]
+Description=rAthena Char Server
+
+[Service]
+WorkingDirectory=/opt/rathena
+ExecStart=/opt/rathena/char-server
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/rathena-map.service <<EOF
+[Unit]
+Description=rAthena Map Server
+
+[Service]
+WorkingDirectory=/opt/rathena
+ExecStart=/opt/rathena/map-server
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable rathena-login rathena-char rathena-map
+systemctl start rathena-login rathena-char rathena-map
+
+# ------------------------------------------------------------
+# 10. Baixar RoBrowser
+# ------------------------------------------------------------
+cd /opt
+git clone https://github.com/vthibault/roBrowser.git robrowser
+cd robrowser
+npm install
+
+# ------------------------------------------------------------
+# 11. Criar QUALITY PRESETS (60 FPS)
+# ------------------------------------------------------------
+cat > /opt/robrowser/config/quality.js <<EOF
+export const QualityPresets = {
+    normal: {
+        width: 1280,
+        height: 720,
+        pixelRatio: 1.0,
+        textureScale: 1.0,
+        scale: 1.0,
+        maxFPS: 60
+    },
+
+    ultra: {
+        width: 1920,
+        height: 1080,
+        pixelRatio: 1.5,
+        textureScale: 1.5,
+        scale: 1.1,
+        maxFPS: 60
+    },
+
+    insane: {
+        width: 3840,
+        height: 2160,
+        pixelRatio: 2.5,
+        textureScale: 2.5,
+        scale: 1.25,
+        maxFPS: 60
+    },
+
+    insane_plus: {
+        width: 7680,
+        height: 4320,
+        pixelRatio: 4.0,
+        textureScale: 4.0,
+        scale: 1.4,
+        maxFPS: 60
+    }
+};
+EOF
+
+# ------------------------------------------------------------
+# 12. Config padrão com MENU DE QUALIDADE
+# ------------------------------------------------------------
+cat > /opt/robrowser/config/default.js <<EOF
+import { QualityPresets } from "./quality.js";
+
+const selected = localStorage.getItem("robrowser_quality") || "ultra";
+const Q = QualityPresets[selected];
+
+export default {
+    servers: [
+        {
+            displayName: "Localhost Server",
+            address: "127.0.0.1",
+            port: 6900,
+            version: 46,
+            packetver: 20200701,
+            langtype: 12
+        }
+    ],
+
+    graphics: {
+        width: Q.width,
+        height: Q.height,
+        useAntialias: true,
+        antialias: "msaa",
+        anisotropy: 16,
+        pixelRatio: Q.pixelRatio,
+        textureScale: Q.textureScale,
+        maxFPS: Q.maxFPS
+    },
+
+    ui: {
+        scale: Q.scale
+    }
+};
+EOF
+
+# ------------------------------------------------------------
+# 13. Inserir MENU HTML no index
+# ------------------------------------------------------------
+cat >> /opt/robrowser/index.html <<'EOF'
+
+<!-- MENU DE QUALIDADE -->
+<div id="quality-box" style="
+    position:fixed;
+    top:20px;
+    right:20px;
+    background:#222;
+    padding:10px;
+    border-radius:10px;
+    color:#fff;
+    z-index:9999;
+    font-family:Arial;
+">
+    <label>Qualidade:</label>
+    <select id="quality-select" style="padding:5px;border-radius:5px;">
+        <option value="normal">Normal (720p)</option>
+        <option value="ultra">Ultra (1080p)</option>
+        <option value="insane">Insane (4K)</option>
+        <option value="insane_plus">Insane++ (8K)</option>
+    </select>
+</div>
+
+<script>
+    const select = document.getElementById("quality-select");
+    select.value = localStorage.getItem("robrowser_quality") || "ultra";
+
+    select.addEventListener("change", function () {
+        localStorage.setItem("robrowser_quality", this.value);
+        alert("Configuração salva! Recarregue a página.");
+    });
+</script>
+EOF
+
+# ------------------------------------------------------------
+# 14. Configurar Nginx
+# ------------------------------------------------------------
+rm -f /etc/nginx/sites-enabled/default
+
+cat > /etc/nginx/sites-available/robrowser <<EOF
+server {
+    listen 80;
+    server_name _;
+
+    root /opt/robrowser;
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+}
+EOF
+
+ln -s /etc/nginx/sites-available/robrowser /etc/nginx/sites-enabled/robrowser
+systemctl restart nginx
+
+echo "=========================================================="
+echo " INSTALAÇÃO COMPLETA!"
+echo " Acesse: http://SEU-IP/"
+echo " Qualidade configurável no menu (60 FPS travado)"
+echo "=========================================================="
+
+✅ COMO RODAR
+chmod +x install_full_rathena_robrowser.sh
+./install_full_rathena_robrowser.sh
+
+🎮 PRONTO
+
+Você agora tem:
+
+✔ rAthena instalado
+✔ MySQL configurado
+✔ RoBrowser com menu de qualidade
+✔ 720p, 1080p, 4K e 8K
+✔ Tudo travado em 60 FPS
+✔ Server rodando em localhost
+✔ Nginx servindo o cliente
