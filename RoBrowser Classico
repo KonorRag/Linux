@@ -1,0 +1,198 @@
+chmod +x full_robrowser_rathena.sh
+sudo ./full_robrowser_rathena.sh
+
+#!/bin/bash
+
+echo "==========================================================="
+echo "   roBrowserLegacy + rAthena - Instalação Plug & Play"
+echo "==========================================================="
+
+if [ "$EUID" -ne 0 ]; then
+  echo "Execute este script como root!"
+  exit 1
+fi
+
+echo "[1/14] Atualizando sistema..."
+apt update && apt upgrade -y
+
+echo "[2/14] Instalando dependências gerais..."
+apt install -y git curl unzip build-essential cmake make gcc g++ \
+libmysqlclient-dev mariadb-server mariadb-client
+
+echo "[3/14] Instalando Node.js 18 LTS..."
+curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+apt install -y nodejs
+
+echo "[4/14] Clonando rAthena..."
+cd /opt
+git clone https://github.com/rathena/rathena.git
+cd rathena
+
+echo "[5/14] Compilando rAthena..."
+mkdir -p build
+cd build
+cmake ..
+make -j$(nproc)
+
+echo "[6/14] Configurando banco de dados MariaDB..."
+
+service mysql start
+
+mysql -u root <<EOF
+CREATE DATABASE rathena;
+CREATE USER 'ragnarok'@'localhost' IDENTIFIED BY 'ragnarok123';
+GRANT ALL PRIVILEGES ON rathena.* TO 'ragnarok'@'localhost';
+FLUSH PRIVILEGES;
+EOF
+
+echo "[7/14] Importando base SQL..."
+cd /opt/rathena/sql-files/
+mysql -u root rathena < main.sql
+mysql -u root rathena < item_db.sql
+mysql -u root rathena < mob_db.sql
+
+echo "[8/14] Ajustando confs do rAthena..."
+sed -i 's/127.0.0.1/0.0.0.0/g' /opt/rathena/conf/char_athena.conf
+sed -i 's/127.0.0.1/0.0.0.0/g' /opt/rathena/conf/map_athena.conf
+sed -i 's/s1/p42/g' /opt/rathena/conf/char_athena.conf
+sed -i 's/s1/p42/g' /opt/rathena/conf/map_athena.conf
+
+sed -i 's/s1/p42/g' /opt/rathena/conf/login_athena.conf
+
+echo "[9/14] Instalando roBrowserLegacy..."
+cd /opt
+git clone https://github.com/MrAntares/roBrowserLegacy.git
+cd roBrowserLegacy
+npm install || true
+
+echo "[10/14] Instalando RemoteClient JS..."
+cd /opt
+git clone https://github.com/FranciscoWallison/roBrowserLegacy-RemoteClient-JS.git
+cd roBrowserLegacy-RemoteClient-JS
+npm install
+mkdir -p /opt/roBrowserLegacy-RemoteClient-JS/resources/grf
+
+echo "[11/14] Atualizando configs do cliente para apontar ao servidor local..."
+sed -i 's/127.0.0.1/0.0.0.0/g' /opt/roBrowserLegacy-RemoteClient-JS/config/configs.js
+sed -i 's/6900/6900/g' /opt/roBrowserLegacy-RemoteClient-JS/config/configs.js
+
+echo "[12/14] Instalando wsProxy..."
+cd /opt
+git clone https://github.com/MrAntares/wsProxy.git
+cd wsProxy
+npm install
+
+echo "[13/14] Criando serviços systemd..."
+
+# rAthena login
+cat > /etc/systemd/system/rathena-login.service <<EOF
+[Unit]
+Description=rAthena Login Server
+After=network.target mysql.service
+
+[Service]
+WorkingDirectory=/opt/rathena
+ExecStart=/opt/rathena/login-server
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# rAthena char
+cat > /etc/systemd/system/rathena-char.service <<EOF
+[Unit]
+Description=rAthena Char Server
+After=rathena-login.service
+
+[Service]
+WorkingDirectory=/opt/rathena
+ExecStart=/opt/rathena/char-server
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# rAthena map
+cat > /etc/systemd/system/rathena-map.service <<EOF
+[Unit]
+Description=rAthena Map Server
+After=rathena-char.service
+
+[Service]
+WorkingDirectory=/opt/rathena
+ExecStart=/opt/rathena/map-server
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Remote Client
+cat > /etc/systemd/system/robrowser-client.service <<EOF
+[Unit]
+Description=roBrowserLegacy Remote Client
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/roBrowserLegacy-RemoteClient-JS
+ExecStart=/usr/bin/npm run start
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# wsProxy
+cat > /etc/systemd/system/robrowser-proxy.service <<EOF
+[Unit]
+Description=roBrowser WebSocket Proxy
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/wsProxy
+ExecStart=/usr/bin/node /opt/wsProxy/proxy.js
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+echo "[14/14] Ativando serviços..."
+systemctl daemon-reload
+systemctl enable rathena-login rathena-char rathena-map
+systemctl enable robrowser-client robrowser-proxy
+
+systemctl start rathena-login
+systemctl start rathena-char
+systemctl start rathena-map
+
+systemctl start robrowser-client
+systemctl start robrowser-proxy
+
+echo "==========================================================="
+echo "           INSTALAÇÃO COMPLETA: SERVIDOR + WEB CLIENT"
+echo "==========================================================="
+echo ""
+echo "✔ rAthena rodando (login/char/map)"
+echo "✔ roBrowser Legacy rodando"
+echo "✔ RemoteClient ativo"
+echo "✔ wsProxy ativo"
+echo ""
+echo "➡ Coloque seus GRFs em:"
+echo "   /opt/roBrowserLegacy-RemoteClient-JS/resources/grf/"
+echo ""
+echo "➡ Acesse o jogo via navegador:"
+echo "   http://SEU_IP:8080"
+echo ""
+echo "➡ Banco de dados:"
+echo "   user: ragnarok"
+echo "   pass: ragnarok123"
+echo "   db:   rathena"
+echo ""
+echo "==========================================================="
+echo "          100% PLUG & PLAY — Servidor PRONTO!"
+echo "==========================================================="
